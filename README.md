@@ -1,36 +1,25 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 신혼부부 내 집 마련 재무 시뮬레이터
 
-## Getting Started
+수지/분당 지역 아파트 매수를 기반으로 잔금일 이후의 현금, 신용대출, 주담대 상환 추이를 실시간으로 분석하는 웹 앱입니다.
 
-First, run the development server:
+**Live:** https://yangcoding1.github.io/buy-house/
+
+## 주요 기능
+
+- 월급, 생활비, 잔금까지 남은 달 등 변수를 입력하면 잔금일 총 가용 현금 자동 계산
+- 취득세, 중개보수, 법무/채권할인 등 부대비용 자동 산출 (툴팁으로 상세 내역 제공)
+- 잔금일 이후 현금 / 신용대출 / 주담대 잔액 추이를 영역형 차트로 시각화
+- 각 계열 토글로 원하는 데이터만 선택적으로 확인 가능
+
+## 개발
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev    # http://localhost:3000
+npm run build  # 정적 빌드 → ./out
+npm run lint
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 배포
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`main` 브랜치에 push하면 GitHub Actions가 자동으로 정적 빌드 후 GitHub Pages에 배포합니다.

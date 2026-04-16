@@ -42,7 +42,7 @@ const calculateMonthlyPayment = (
 
 function SimulatorContent() {
   const searchParams = useSearchParams();
-  const initialCash = Number(searchParams.get("cash")) || 800000;
+  const initialCash = Number(searchParams.get("cash")) || 80000;
   const initialYears = Number(searchParams.get("years")) || 30;
 
   // --- States ---
@@ -100,7 +100,7 @@ function SimulatorContent() {
     let currentCash = inputs.currentCash;
     let currentCreditLoan = 0;
     let currentMortgage = 0;
-    
+
     let month = 0;
     let creditLoanClearedMonth = -1;
 
@@ -129,10 +129,11 @@ function SimulatorContent() {
       // 매수 전 (저축기)
       if (month < inputs.monthsUntilPurchase) {
         currentCash += netIncomeBeforePurchase;
-      } 
+      }
       // 매수 후 (상환기)
       else {
-        const netIncome = totalSalary - inputs.livingExpense - monthlyMortgagePmt;
+        const netIncome =
+          totalSalary - inputs.livingExpense - monthlyMortgagePmt;
 
         if (currentCreditLoan > 0) {
           // 신용대출 금리 반영 로직
@@ -162,13 +163,18 @@ function SimulatorContent() {
       }
 
       // 종료 조건: 매수 이후이고 신용대출 상환 후 12개월이 지났거나, 총 360개월 초과 시
-      if (month > inputs.monthsUntilPurchase && creditLoanClearedMonth !== -1 && month >= creditLoanClearedMonth + 12)
+      if (
+        month > inputs.monthsUntilPurchase &&
+        creditLoanClearedMonth !== -1 &&
+        month >= creditLoanClearedMonth + 12
+      )
         break;
       if (month > 360) break;
       month++;
     }
 
-    const accumulatedSavings = netIncomeBeforePurchase * inputs.monthsUntilPurchase;
+    const accumulatedSavings =
+      netIncomeBeforePurchase * inputs.monthsUntilPurchase;
     const totalCashAtPurchase = inputs.currentCash + accumulatedSavings;
 
     return {
@@ -621,34 +627,35 @@ function SimulatorContent() {
                             key={i}
                             className={`border-b hover:bg-slate-50 ${row.isPurchaseMonth ? "bg-rose-50" : ""}`}
                           >
-                          <td className="px-4 py-3 font-medium text-slate-900">
-                            {row.name} {i === 0 && "(현재)"}
-                          </td>
-                          <td className="px-4 py-3 text-right text-emerald-600 font-medium">
-                            {formatKRW(row.cash)}
-                          </td>
-                          <td className="px-4 py-3 text-right text-orange-500 font-medium">
-                            {formatKRW(row.creditLoan)}
-                          </td>
-                          <td className="px-4 py-3 text-right text-blue-600 font-medium">
-                            {formatKRW(row.mortgage)}
-                          </td>
-                          <td className="px-4 py-3 text-center text-xs">
-                            {row.isPurchaseMonth && (
-                              <span className="px-2 py-0.5 bg-rose-100 text-rose-700 rounded-full font-bold">
-                                매매/잔금
-                              </span>
-                            )}
-                            {i > 0 &&
-                              row.creditLoan === 0 &&
-                              data[i - 1].creditLoan > 0 && (
-                                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">
-                                  신용대출 완납
+                            <td className="px-4 py-3 font-medium text-slate-900">
+                              {row.name} {i === 0 && "(현재)"}
+                            </td>
+                            <td className="px-4 py-3 text-right text-emerald-600 font-medium">
+                              {formatKRW(row.cash)}
+                            </td>
+                            <td className="px-4 py-3 text-right text-orange-500 font-medium">
+                              {formatKRW(row.creditLoan)}
+                            </td>
+                            <td className="px-4 py-3 text-right text-blue-600 font-medium">
+                              {formatKRW(row.mortgage)}
+                            </td>
+                            <td className="px-4 py-3 text-center text-xs">
+                              {row.isPurchaseMonth && (
+                                <span className="px-2 py-0.5 bg-rose-100 text-rose-700 rounded-full font-bold">
+                                  매매/잔금
                                 </span>
                               )}
-                          </td>
-                        </tr>
-                      ))}
+                              {i > 0 &&
+                                row.creditLoan === 0 &&
+                                data[i - 1].creditLoan > 0 && (
+                                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">
+                                    신용대출 완납
+                                  </span>
+                                )}
+                            </td>
+                          </tr>
+                        ),
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -663,13 +670,17 @@ function SimulatorContent() {
 
 export default function RealEstateSimulator() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md bg-white border-none shadow-sm p-8 text-center">
-          <p className="text-slate-500 font-medium">데이터를 불러오는 중입니다...</p>
-        </Card>
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+          <Card className="w-full max-w-md bg-white border-none shadow-sm p-8 text-center">
+            <p className="text-slate-500 font-medium">
+              데이터를 불러오는 중입니다...
+            </p>
+          </Card>
+        </div>
+      }
+    >
       <SimulatorContent />
     </Suspense>
   );

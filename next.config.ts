@@ -1,8 +1,10 @@
 import type { NextConfig } from "next";
 
+const isProd = process.env.NODE_ENV === "production";
+
 const nextConfig: NextConfig = {
   output: "export",
-  basePath: "/buy-house", // 레포지토리 이름과 동일하게 설정
+  basePath: isProd ? "/buy-house" : "", // 프로덕션(배포) 환경에서만 basePath 적용
   images: {
     unoptimized: true,
   },

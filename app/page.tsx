@@ -9,17 +9,20 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 // --- Utility Functions ---
-const formatKRW = (val: number) =>
-  new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW" })
-    .format(val * 10000)
-    .replace("₩", "") + "원";
+const formatKRW = (val: any) => {
+  if (isNaN(val)) return "0원";
+  return (
+    new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW" })
+      .format(val * 10000)
+      .replace("₩", "") + "원"
+  );
+};
 
 const calculateMonthlyPayment = (
   principal: number,
@@ -43,8 +46,10 @@ export default function RealEstateSimulator() {
     aptPrice: 145000, // 만원 단위
     currentCash: 80000,
     mortgageAmount: 60000,
-    mortgageRate: 4.2,
+    mortgageRate: 5.0, // 주담대 디폴트 5%
     mortgageYears: 30,
+    creditLoanRate: 5.5, // 신용대출 금리 신설
+    monthsUntilPurchase: 10, // 잔금일(매매 실행)까지 남은 개월 수
     livingExpense: 250,
   });
 
@@ -57,17 +62,39 @@ export default function RealEstateSimulator() {
   // --- Logic ---
   const simulationData = useMemo(() => {
     const totalSalary = inputs.mySalary + inputs.wifeSalary;
-    const incidentalCost = Math.round(inputs.aptPrice * 0.033);
+    const monthlySavingsBeforePurchase = totalSalary - inputs.livingExpense;
+    const accumulatedSavings =
+      monthlySavingsBeforePurchase * inputs.monthsUntilPurchase;
+    const totalCashAtPurchase = inputs.currentCash + accumulatedSavings;
+
+    // 대한민국 부동산 부대비용 상세 계산 (2026년 기준 추정)
+    // 1. 취득세 (+지방교육세 등): 9억 초과 시 3.3% 상정
+    let taxRate = 0.011;
+    if (inputs.aptPrice > 60000 && inputs.aptPrice <= 90000) taxRate = 0.022;
+    if (inputs.aptPrice > 90000) taxRate = 0.033;
+    const acquisitionTax = inputs.aptPrice * taxRate;
+
+    // 2. 중개보수: 12~15억 구간 0.6% + 부가세 10%
+    let brokerRate = 0.005;
+    if (inputs.aptPrice >= 120000 && inputs.aptPrice < 150000)
+      brokerRate = 0.006;
+    if (inputs.aptPrice >= 150000) brokerRate = 0.007;
+    const brokerFee = inputs.aptPrice * brokerRate * 1.1;
+
+    // 3. 법무사 비용 및 채권 할인 등 (보수적으로 매매가의 약 0.2% 산정)
+    const legalAndBondFee = inputs.aptPrice * 0.002;
+
+    const incidentalCost = acquisitionTax + brokerFee + legalAndBondFee;
     const totalRequired = inputs.aptPrice + incidentalCost;
 
-    // 초기 부족분 (신용대출 발생)
+    // 매수 시점(Month 0) 초기 셋팅
     let currentCreditLoan = Math.max(
       0,
-      totalRequired - (inputs.currentCash + inputs.mortgageAmount),
+      totalRequired - (totalCashAtPurchase + inputs.mortgageAmount),
     );
     let currentCash = Math.max(
       0,
-      inputs.currentCash + inputs.mortgageAmount - totalRequired,
+      totalCashAtPurchase + inputs.mortgageAmount - totalRequired,
     );
     let currentMortgage = inputs.mortgageAmount;
 
@@ -81,49 +108,71 @@ export default function RealEstateSimulator() {
     let month = 0;
     let creditLoanClearedMonth = -1;
 
-    // 시뮬레이션: 신용대출 상환 완료 후 + 12개월까지
+    // 시뮬레이션: 매수 시점(0개월)부터 신용대출 상환 완료 후 12개월까지
     while (true) {
       const netIncome = totalSalary - inputs.livingExpense - monthlyMortgagePmt;
 
-      // 데이터 기록
       data.push({
-        name: `${month}개월`,
+        name: `잔금 후 ${month}개월`,
         cash: Math.round(currentCash),
         creditLoan: Math.round(currentCreditLoan),
         mortgage: Math.round(currentMortgage),
       });
 
-      // 상환 로직
+      // 신용대출이 남아있는 경우 금리 반영하여 상환
       if (currentCreditLoan > 0) {
-        if (netIncome >= currentCreditLoan) {
-          const surplus = netIncome - currentCreditLoan;
+        const monthlyCreditInterest =
+          currentCreditLoan * (inputs.creditLoanRate / 100 / 12);
+        const requiredToClear = currentCreditLoan + monthlyCreditInterest;
+
+        if (netIncome >= requiredToClear) {
+          const surplus = netIncome - requiredToClear;
           currentCreditLoan = 0;
           currentCash += surplus;
           creditLoanClearedMonth = month;
         } else {
-          currentCreditLoan -= netIncome;
+          currentCreditLoan =
+            currentCreditLoan + monthlyCreditInterest - netIncome;
         }
       } else {
-        currentCash += netIncome;
+        currentCash += netIncome; // 신용대출 완납 후엔 순소득 모두 현금 적립
       }
 
-      // 주담대 잔액 감소 (단순화를 위해 원금 균등에 가까운 감액 적용 또는 고정금리 유지)
-      // 실제 원리금 균등 상환 시 원금 부분 계산
-      const monthlyRate = inputs.mortgageRate / 100 / 12;
-      const interestPayment = currentMortgage * monthlyRate;
+      const monthlyMortgageRate = inputs.mortgageRate / 100 / 12;
+      const interestPayment = currentMortgage * monthlyMortgageRate;
       const principalPayment = monthlyMortgagePmt - interestPayment;
       currentMortgage = Math.max(0, currentMortgage - principalPayment);
 
       if (creditLoanClearedMonth !== -1 && month >= creditLoanClearedMonth + 12)
         break;
-      if (month > 360) break; // 최대 30년 제한
+      if (month > 360) break;
       month++;
     }
-    return { data, incidentalCost, totalRequired, monthlyMortgagePmt };
+
+    return {
+      data,
+      incidentalCost,
+      totalRequired,
+      monthlyMortgagePmt,
+      totalCashAtPurchase,
+      accumulatedSavings,
+      acquisitionTax,
+      brokerFee,
+      legalAndBondFee,
+    };
   }, [inputs]);
 
-  const { data, incidentalCost, totalRequired, monthlyMortgagePmt } =
-    simulationData;
+  const {
+    data,
+    incidentalCost,
+    totalRequired,
+    monthlyMortgagePmt,
+    totalCashAtPurchase,
+    accumulatedSavings,
+    acquisitionTax,
+    brokerFee,
+    legalAndBondFee,
+  } = simulationData;
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
@@ -140,13 +189,15 @@ export default function RealEstateSimulator() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Input Panel */}
           <Card className="lg:col-span-1 bg-white border-none shadow-sm">
-            <CardHeader>
+            <CardHeader className="pb-3">
               <CardTitle className="text-lg">설정 변수</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>나의 월급 (만)</Label>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">
+                    나의 월급 (만)
+                  </Label>
                   <Input
                     type="number"
                     value={inputs.mySalary}
@@ -155,8 +206,10 @@ export default function RealEstateSimulator() {
                     }
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>아내 월급 (만)</Label>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">
+                    아내 월급 (만)
+                  </Label>
                   <Input
                     type="number"
                     value={inputs.wifeSalary}
@@ -166,8 +219,54 @@ export default function RealEstateSimulator() {
                   />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>아파트 매매가 (만)</Label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">
+                    긴축 생활비 (만)
+                  </Label>
+                  <Input
+                    type="number"
+                    value={inputs.livingExpense}
+                    onChange={(e) =>
+                      setInputs({ ...inputs, livingExpense: +e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold text-blue-600">
+                    잔금까지 남은 달
+                  </Label>
+                  <Input
+                    type="number"
+                    className="border-blue-200 bg-blue-50"
+                    value={inputs.monthsUntilPurchase}
+                    onChange={(e) =>
+                      setInputs({
+                        ...inputs,
+                        monthsUntilPurchase: +e.target.value,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-lg text-sm">
+                <p className="text-slate-600">
+                  현재 현금: {formatKRW(inputs.currentCash)}
+                </p>
+                <p className="text-blue-600 font-medium">
+                  잔금일 추가 저축액: +{formatKRW(accumulatedSavings)}
+                </p>
+                <p className="font-bold border-t mt-1 pt-1">
+                  잔금일 총 가용 현금: {formatKRW(totalCashAtPurchase)}
+                </p>
+              </div>
+
+              <div className="space-y-1 pt-2">
+                <div className="flex items-center">
+                  <Label className="text-xs text-slate-500">
+                    아파트 매매가 (만)
+                  </Label>
+                </div>
                 <Input
                   type="number"
                   value={inputs.aptPrice}
@@ -175,23 +274,40 @@ export default function RealEstateSimulator() {
                     setInputs({ ...inputs, aptPrice: +e.target.value })
                   }
                 />
-                <p className="text-xs text-blue-600">
-                  부대비용(3.3%): +{formatKRW(incidentalCost)}
-                </p>
+
+                {/* 툴팁이 적용된 부대비용 영역 */}
+                <div className="relative group flex items-center text-xs text-slate-500 mt-1 cursor-help w-max">
+                  <span className="border-b border-dashed border-slate-400">
+                    부대비용 자동계산: +{formatKRW(incidentalCost)}
+                  </span>
+                  <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 bg-slate-800 text-white text-xs rounded-lg p-3 shadow-xl z-50">
+                    <p className="font-bold mb-2 pb-1 border-b border-slate-600">
+                      부대비용 상세 내역 (추정)
+                    </p>
+                    <div className="space-y-1">
+                      <p className="flex justify-between">
+                        <span>취득세 등 (약 3.3%)</span>
+                        <span>{formatKRW(acquisitionTax)}</span>
+                      </p>
+                      <p className="flex justify-between">
+                        <span>중개보수 (+VAT)</span>
+                        <span>{formatKRW(brokerFee)}</span>
+                      </p>
+                      <p className="flex justify-between">
+                        <span>법무/채권할인 (약 0.2%)</span>
+                        <span>{formatKRW(legalAndBondFee)}</span>
+                      </p>
+                    </div>
+                    <div className="absolute -bottom-1 left-4 w-2 h-2 bg-slate-800 rotate-45"></div>
+                  </div>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label>보유 현금 (만)</Label>
-                <Input
-                  type="number"
-                  value={inputs.currentCash}
-                  onChange={(e) =>
-                    setInputs({ ...inputs, currentCash: +e.target.value })
-                  }
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>주담대 금액 (만)</Label>
+
+              <div className="grid grid-cols-2 gap-4 border-t pt-4 mt-2">
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">
+                    주담대 금액 (만)
+                  </Label>
                   <Input
                     type="number"
                     value={inputs.mortgageAmount}
@@ -200,8 +316,10 @@ export default function RealEstateSimulator() {
                     }
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>금리 (%)</Label>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">
+                    주담대 금리 (%)
+                  </Label>
                   <Input
                     type="number"
                     step="0.1"
@@ -212,15 +330,20 @@ export default function RealEstateSimulator() {
                   />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>긴축 생활비 (만)</Label>
-                <Input
-                  type="number"
-                  value={inputs.livingExpense}
-                  onChange={(e) =>
-                    setInputs({ ...inputs, livingExpense: +e.target.value })
-                  }
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">
+                    신용대출 금리 (%)
+                  </Label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    value={inputs.creditLoanRate}
+                    onChange={(e) =>
+                      setInputs({ ...inputs, creditLoanRate: +e.target.value })
+                    }
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -230,7 +353,7 @@ export default function RealEstateSimulator() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card className="bg-white border-none shadow-sm">
                 <CardContent className="pt-6">
-                  <p className="text-sm text-slate-500">총 소요 자금</p>
+                  <p className="text-sm text-slate-500">매수 총 소요 자금</p>
                   <p className="text-xl font-bold text-slate-900">
                     {formatKRW(totalRequired)}
                   </p>
@@ -238,7 +361,9 @@ export default function RealEstateSimulator() {
               </Card>
               <Card className="bg-white border-none shadow-sm">
                 <CardContent className="pt-6">
-                  <p className="text-sm text-slate-500">초기 신용대출</p>
+                  <p className="text-sm text-slate-500">
+                    잔금일 신용대출 부족분
+                  </p>
                   <p className="text-xl font-bold text-red-500">
                     {formatKRW(data[0].creditLoan)}
                   </p>
@@ -246,7 +371,9 @@ export default function RealEstateSimulator() {
               </Card>
               <Card className="bg-white border-none shadow-sm">
                 <CardContent className="pt-6">
-                  <p className="text-sm text-slate-500">월 원리금 상환</p>
+                  <p className="text-sm text-slate-500">
+                    주담대 월 원리금 상환
+                  </p>
                   <p className="text-xl font-bold text-blue-600">
                     {formatKRW(Math.round(monthlyMortgagePmt))}
                   </p>
@@ -257,13 +384,15 @@ export default function RealEstateSimulator() {
             {/* Chart Area */}
             <Card className="bg-white border-none shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-lg">자산 및 대출 추이</CardTitle>
+                <CardTitle className="text-lg">
+                  잔금일 이후 자산/대출 추이
+                </CardTitle>
                 <div className="flex gap-2">
                   <button
                     onClick={() =>
                       setVisibleKeys((prev) => ({ ...prev, cash: !prev.cash }))
                     }
-                    className={`px-3 py-1 text-xs rounded-full border ${visibleKeys.cash ? "bg-emerald-500 text-white" : "bg-white text-slate-400"}`}
+                    className={`px-3 py-1 text-xs rounded-full border ${visibleKeys.cash ? "bg-emerald-500 border-emerald-500 text-white" : "bg-white text-slate-400"}`}
                   >
                     현금
                   </button>
@@ -274,7 +403,7 @@ export default function RealEstateSimulator() {
                         creditLoan: !prev.creditLoan,
                       }))
                     }
-                    className={`px-3 py-1 text-xs rounded-full border ${visibleKeys.creditLoan ? "bg-orange-500 text-white" : "bg-white text-slate-400"}`}
+                    className={`px-3 py-1 text-xs rounded-full border ${visibleKeys.creditLoan ? "bg-orange-500 border-orange-500 text-white" : "bg-white text-slate-400"}`}
                   >
                     신용대출
                   </button>
@@ -285,7 +414,7 @@ export default function RealEstateSimulator() {
                         mortgage: !prev.mortgage,
                       }))
                     }
-                    className={`px-3 py-1 text-xs rounded-full border ${visibleKeys.mortgage ? "bg-blue-500 text-white" : "bg-white text-slate-400"}`}
+                    className={`px-3 py-1 text-xs rounded-full border ${visibleKeys.mortgage ? "bg-blue-500 border-blue-500 text-white" : "bg-white text-slate-400"}`}
                   >
                     주담대
                   </button>
@@ -396,50 +525,6 @@ export default function RealEstateSimulator() {
             </Card>
           </div>
         </div>
-
-        {/* 상세 표 */}
-        <Card className="bg-white border-none shadow-sm overflow-hidden">
-          <CardHeader>
-            <CardTitle className="text-lg">
-              월별 상세 데이터 (Timeline)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-600 font-medium">
-                  <tr>
-                    <th className="px-6 py-3">기간</th>
-                    <th className="px-6 py-3">보유 현금</th>
-                    <th className="px-6 py-3">신용대출 잔액</th>
-                    <th className="px-6 py-3">주담대 잔액</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {data
-                    .filter((_, i) => i % 3 === 0 || i === data.length - 1)
-                    .map((row, idx) => (
-                      <tr
-                        key={idx}
-                        className="hover:bg-slate-50 transition-colors"
-                      >
-                        <td className="px-6 py-4 font-medium">{row.name}</td>
-                        <td className="px-6 py-4 text-emerald-600">
-                          {formatKRW(row.cash)}
-                        </td>
-                        <td className="px-6 py-4 text-orange-600">
-                          {formatKRW(row.creditLoan)}
-                        </td>
-                        <td className="px-6 py-4 text-blue-600">
-                          {formatKRW(row.mortgage)}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );

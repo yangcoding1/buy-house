@@ -11,6 +11,9 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +34,7 @@ const calculateMonthlyPayment = (
   annualRate: number,
   years: number,
 ) => {
+  if (principal <= 0) return 0;
   const monthlyRate = annualRate / 100 / 12;
   const numberOfPayments = years * 12;
   if (monthlyRate === 0) return principal / numberOfPayments;
@@ -39,6 +43,62 @@ const calculateMonthlyPayment = (
     (Math.pow(1 + monthlyRate, numberOfPayments) - 1)
   );
 };
+
+const GaugeChart = ({
+  value,
+  label,
+  color,
+  status,
+}: {
+  value: number;
+  label: string;
+  color: string;
+  status: string;
+}) => {
+  const data = [
+    { value: Math.min(100, Math.max(0, value)) },
+    { value: 100 - Math.min(100, Math.max(0, value)) },
+  ];
+
+  return (
+    <div className="flex flex-col items-center justify-center h-48 relative">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={data}
+            cx="50%"
+            cy="80%"
+            startAngle={180}
+            endAngle={0}
+            innerRadius="65%"
+            outerRadius="90%"
+            paddingAngle={0}
+            dataKey="value"
+            stroke="none"
+          >
+            <Cell fill={color} />
+            <Cell fill="#f1f5f9" />
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="absolute top-[50%] left-1/2 -translate-x-1/2 text-center w-full">
+        <p className="text-xl font-bold text-slate-900">{value.toFixed(1)}%</p>
+        <p className="text-sm font-bold" style={{ color }}>
+          {status}
+        </p>
+      </div>
+      <p className="text-sm font-semibold text-slate-600 mb-2">{label}</p>
+    </div>
+  );
+};
+
+interface SimulationRow {
+  name: string;
+  cash: number;
+  creditLoan: number;
+  mortgage: number;
+  isPurchaseMonth: boolean;
+}
 
 function SimulatorContent() {
   const searchParams = useSearchParams();
@@ -95,6 +155,69 @@ function SimulatorContent() {
       inputs.mortgageRate,
       inputs.mortgageYears,
     );
+
+    // --- Risk Metrics Calculations ---
+    const accumulatedSavings =
+      netIncomeBeforePurchase * inputs.monthsUntilPurchase;
+    const totalCashAtPurchase = inputs.currentCash + accumulatedSavings;
+    const initialCreditLoan = Math.max(
+      0,
+      totalRequired - inputs.mortgageAmount - totalCashAtPurchase,
+    );
+
+    // A. LTV
+    const ltv = (inputs.mortgageAmount / inputs.aptPrice) * 100;
+    let ltvStatus = "안전";
+    let ltvColor = "#10b981";
+    if (ltv >= 40 && ltv <= 60) {
+      ltvStatus = "주의";
+      ltvColor = "#eab308";
+    } else if (ltv > 60) {
+      ltvStatus = "위험";
+      ltvColor = "#ef4444";
+    }
+
+    // B. DSR (Bank screening standard)
+    const annualIncome = totalSalary * 12;
+    const annualMortgagePmt = monthlyMortgagePmt * 12;
+    // Credit loan bank repayment assumption: 5 years equal principal and interest
+    const monthlyCreditLoanPmtForBank = calculateMonthlyPayment(
+      initialCreditLoan,
+      inputs.creditLoanRate,
+      5,
+    );
+    const annualCreditLoanPmt = monthlyCreditLoanPmtForBank * 12;
+    const dsr =
+      ((annualMortgagePmt + annualCreditLoanPmt) / annualIncome) * 100;
+    let dsrStatus = "안전";
+    let dsrColor = "#10b981";
+    if (dsr >= 30 && dsr <= 40) {
+      dsrStatus = "주의";
+      dsrColor = "#eab308";
+    } else if (dsr > 40) {
+      dsrStatus = "위험";
+      dsrColor = "#ef4444";
+    }
+
+    // C. Cash Flow Margin
+    const initialCreditLoanInterest =
+      initialCreditLoan * (inputs.creditLoanRate / 100 / 12);
+    const cashFlowMargin =
+      ((totalSalary -
+        inputs.livingExpense -
+        monthlyMortgagePmt -
+        initialCreditLoanInterest) /
+        totalSalary) *
+      100;
+    let cfStatus = "위험";
+    let cfColor = "#ef4444";
+    if (cashFlowMargin >= 20) {
+      cfStatus = "안전";
+      cfColor = "#10b981";
+    } else if (cashFlowMargin >= 5 && cashFlowMargin < 20) {
+      cfStatus = "주의";
+      cfColor = "#eab308";
+    }
 
     const data = [];
     let currentCash = inputs.currentCash;
@@ -173,10 +296,6 @@ function SimulatorContent() {
       month++;
     }
 
-    const accumulatedSavings =
-      netIncomeBeforePurchase * inputs.monthsUntilPurchase;
-    const totalCashAtPurchase = inputs.currentCash + accumulatedSavings;
-
     return {
       data,
       incidentalCost,
@@ -187,6 +306,11 @@ function SimulatorContent() {
       acquisitionTax,
       brokerFee,
       legalAndBondFee,
+      riskMetrics: {
+        ltv: { value: ltv, status: ltvStatus, color: ltvColor },
+        dsr: { value: dsr, status: dsrStatus, color: dsrColor },
+        cf: { value: cashFlowMargin, status: cfStatus, color: cfColor },
+      },
     };
   }, [inputs]);
 
@@ -200,6 +324,7 @@ function SimulatorContent() {
     acquisitionTax,
     brokerFee,
     legalAndBondFee,
+    riskMetrics,
   } = simulationData;
 
   return (
@@ -207,11 +332,9 @@ function SimulatorContent() {
       <div className="max-w-6xl mx-auto space-y-6">
         <header className="flex flex-col gap-2">
           <h1 className="text-3xl font-bold tracking-tight">
-            신혼부부 내 집 마련 재무 시뮬레이터
+            내 집 마련 재무 시뮬레이터
           </h1>
-          <p className="text-slate-500">
-            수지/분당 지역 매수 기반 실시간 상환 추이 분석
-          </p>
+          <p className="text-slate-500">부동산 매수 시뮬레이터</p>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -405,6 +528,35 @@ function SimulatorContent() {
 
           {/* Dashboard Right */}
           <div className="lg:col-span-2 space-y-6">
+            {/* Risk Assessment Dashboard */}
+            <Card className="bg-white border-none shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg">가계 대출 위험도 분석</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-2">
+                  <GaugeChart
+                    value={riskMetrics.ltv.value}
+                    status={riskMetrics.ltv.status}
+                    color={riskMetrics.ltv.color}
+                    label="LTV (주담대 비율)"
+                  />
+                  <GaugeChart
+                    value={riskMetrics.dsr.value}
+                    status={riskMetrics.dsr.status}
+                    color={riskMetrics.dsr.color}
+                    label="DSR (총부채원리금)"
+                  />
+                  <GaugeChart
+                    value={riskMetrics.cf.value}
+                    status={riskMetrics.cf.status}
+                    color={riskMetrics.cf.color}
+                    label="실질 잉여 현금흐름"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card className="bg-white border-none shadow-sm">
                 <CardContent className="pt-6">
@@ -420,7 +572,10 @@ function SimulatorContent() {
                     잔금일 신용대출 부족분
                   </p>
                   <p className="text-xl font-bold text-red-500">
-                    {formatKRW(data[0].creditLoan)}
+                    {formatKRW(
+                      data.find((d: SimulationRow) => d.isPurchaseMonth)
+                        ?.creditLoan || 0,
+                    )}
                   </p>
                 </CardContent>
               </Card>
@@ -556,8 +711,7 @@ function SimulatorContent() {
                       tickFormatter={(val) => `${val / 10000}억`}
                     />
                     <Tooltip
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      formatter={(value: any) => formatKRW(Number(value))}
+                      formatter={(value: number) => formatKRW(Number(value))}
                     />
                     {visibleKeys.cash && (
                       <Area
@@ -612,50 +766,39 @@ function SimulatorContent() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.map(
-                        (
-                          row: {
-                            name: string;
-                            cash: number;
-                            creditLoan: number;
-                            mortgage: number;
-                            isPurchaseMonth: boolean;
-                          },
-                          i: number,
-                        ) => (
-                          <tr
-                            key={i}
-                            className={`border-b hover:bg-slate-50 ${row.isPurchaseMonth ? "bg-rose-50" : ""}`}
-                          >
-                            <td className="px-4 py-3 font-medium text-slate-900">
-                              {row.name} {i === 0 && "(현재)"}
-                            </td>
-                            <td className="px-4 py-3 text-right text-emerald-600 font-medium">
-                              {formatKRW(row.cash)}
-                            </td>
-                            <td className="px-4 py-3 text-right text-orange-500 font-medium">
-                              {formatKRW(row.creditLoan)}
-                            </td>
-                            <td className="px-4 py-3 text-right text-blue-600 font-medium">
-                              {formatKRW(row.mortgage)}
-                            </td>
-                            <td className="px-4 py-3 text-center text-xs">
-                              {row.isPurchaseMonth && (
-                                <span className="px-2 py-0.5 bg-rose-100 text-rose-700 rounded-full font-bold">
-                                  매매/잔금
+                      {data.map((row: SimulationRow, i: number) => (
+                        <tr
+                          key={i}
+                          className={`border-b hover:bg-slate-50 ${row.isPurchaseMonth ? "bg-rose-50" : ""}`}
+                        >
+                          <td className="px-4 py-3 font-medium text-slate-900">
+                            {row.name} {i === 0 && "(현재)"}
+                          </td>
+                          <td className="px-4 py-3 text-right text-emerald-600 font-medium">
+                            {formatKRW(row.cash)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-orange-500 font-medium">
+                            {formatKRW(row.creditLoan)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-blue-600 font-medium">
+                            {formatKRW(row.mortgage)}
+                          </td>
+                          <td className="px-4 py-3 text-center text-xs">
+                            {row.isPurchaseMonth && (
+                              <span className="px-2 py-0.5 bg-rose-100 text-rose-700 rounded-full font-bold">
+                                매매/잔금
+                              </span>
+                            )}
+                            {i > 0 &&
+                              row.creditLoan === 0 &&
+                              data[i - 1].creditLoan > 0 && (
+                                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">
+                                  신용대출 완납
                                 </span>
                               )}
-                              {i > 0 &&
-                                row.creditLoan === 0 &&
-                                data[i - 1].creditLoan > 0 && (
-                                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">
-                                    신용대출 완납
-                                  </span>
-                                )}
-                            </td>
-                          </tr>
-                        ),
-                      )}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>

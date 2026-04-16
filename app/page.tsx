@@ -711,7 +711,7 @@ function SimulatorContent() {
                       tickFormatter={(val) => `${val / 10000}억`}
                     />
                     <Tooltip
-                      formatter={(value: number) => formatKRW(Number(value))}
+                      formatter={(value) => formatKRW(Number(value || 0))}
                     />
                     {visibleKeys.cash && (
                       <Area

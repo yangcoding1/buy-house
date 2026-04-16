@@ -241,6 +241,21 @@ function SimulatorContent() {
                   />
                 </div>
               </div>
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold text-emerald-600">
+                    현재 현금 (만)
+                  </Label>
+                  <Input
+                    type="number"
+                    className="border-emerald-200 bg-emerald-50"
+                    value={inputs.currentCash}
+                    onChange={(e) =>
+                      setInputs({ ...inputs, currentCash: +e.target.value })
+                    }
+                  />
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <Label className="text-xs text-slate-500">
@@ -363,6 +378,18 @@ function SimulatorContent() {
                     value={inputs.creditLoanRate}
                     onChange={(e) =>
                       setInputs({ ...inputs, creditLoanRate: +e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">
+                    대출 기간 (년)
+                  </Label>
+                  <Input
+                    type="number"
+                    value={inputs.mortgageYears}
+                    onChange={(e) =>
+                      setInputs({ ...inputs, mortgageYears: +e.target.value })
                     }
                   />
                 </div>

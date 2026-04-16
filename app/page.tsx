@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AreaChart,
   Area,
@@ -9,13 +10,14 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  ReferenceLine,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 // --- Utility Functions ---
-const formatKRW = (val: any) => {
+const formatKRW = (val: number) => {
   if (isNaN(val)) return "0원";
   return (
     new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW" })
@@ -38,16 +40,20 @@ const calculateMonthlyPayment = (
   );
 };
 
-export default function RealEstateSimulator() {
+function SimulatorContent() {
+  const searchParams = useSearchParams();
+  const initialCash = Number(searchParams.get("cash")) || 800000;
+  const initialYears = Number(searchParams.get("years")) || 30;
+
   // --- States ---
   const [inputs, setInputs] = useState({
     mySalary: 450,
     wifeSalary: 400,
     aptPrice: 145000, // 만원 단위
-    currentCash: 80000,
+    currentCash: initialCash,
     mortgageAmount: 60000,
     mortgageRate: 5.0, // 주담대 디폴트 5%
-    mortgageYears: 30,
+    mortgageYears: initialYears,
     creditLoanRate: 5.5, // 신용대출 금리 신설
     monthsUntilPurchase: 10, // 잔금일(매매 실행)까지 남은 개월 수
     livingExpense: 250,
@@ -62,10 +68,7 @@ export default function RealEstateSimulator() {
   // --- Logic ---
   const simulationData = useMemo(() => {
     const totalSalary = inputs.mySalary + inputs.wifeSalary;
-    const monthlySavingsBeforePurchase = totalSalary - inputs.livingExpense;
-    const accumulatedSavings =
-      monthlySavingsBeforePurchase * inputs.monthsUntilPurchase;
-    const totalCashAtPurchase = inputs.currentCash + accumulatedSavings;
+    const netIncomeBeforePurchase = totalSalary - inputs.livingExpense;
 
     // 대한민국 부동산 부대비용 상세 계산 (2026년 기준 추정)
     // 1. 취득세 (+지방교육세 등): 9억 초과 시 3.3% 상정
@@ -87,17 +90,6 @@ export default function RealEstateSimulator() {
     const incidentalCost = acquisitionTax + brokerFee + legalAndBondFee;
     const totalRequired = inputs.aptPrice + incidentalCost;
 
-    // 매수 시점(Month 0) 초기 셋팅
-    let currentCreditLoan = Math.max(
-      0,
-      totalRequired - (totalCashAtPurchase + inputs.mortgageAmount),
-    );
-    let currentCash = Math.max(
-      0,
-      totalCashAtPurchase + inputs.mortgageAmount - totalRequired,
-    );
-    let currentMortgage = inputs.mortgageAmount;
-
     const monthlyMortgagePmt = calculateMonthlyPayment(
       inputs.mortgageAmount,
       inputs.mortgageRate,
@@ -105,49 +97,79 @@ export default function RealEstateSimulator() {
     );
 
     const data = [];
+    let currentCash = inputs.currentCash;
+    let currentCreditLoan = 0;
+    let currentMortgage = 0;
+    
     let month = 0;
     let creditLoanClearedMonth = -1;
 
-    // 시뮬레이션: 매수 시점(0개월)부터 신용대출 상환 완료 후 12개월까지
+    // 시뮬레이션: 현재(0개월)부터 시작
     while (true) {
-      const netIncome = totalSalary - inputs.livingExpense - monthlyMortgagePmt;
+      // 매수 시점(잔금일) 이벤트
+      if (month === inputs.monthsUntilPurchase) {
+        const requiredCash = totalRequired - inputs.mortgageAmount;
+        if (currentCash >= requiredCash) {
+          currentCash -= requiredCash;
+        } else {
+          currentCreditLoan = requiredCash - currentCash;
+          currentCash = 0;
+        }
+        currentMortgage = inputs.mortgageAmount;
+      }
 
       data.push({
-        name: `잔금 후 ${month}개월`,
+        name: `${month}개월`,
         cash: Math.round(currentCash),
         creditLoan: Math.round(currentCreditLoan),
         mortgage: Math.round(currentMortgage),
+        isPurchaseMonth: month === inputs.monthsUntilPurchase,
       });
 
-      // 신용대출이 남아있는 경우 금리 반영하여 상환
-      if (currentCreditLoan > 0) {
-        const monthlyCreditInterest =
-          currentCreditLoan * (inputs.creditLoanRate / 100 / 12);
-        const requiredToClear = currentCreditLoan + monthlyCreditInterest;
+      // 매수 전 (저축기)
+      if (month < inputs.monthsUntilPurchase) {
+        currentCash += netIncomeBeforePurchase;
+      } 
+      // 매수 후 (상환기)
+      else {
+        const netIncome = totalSalary - inputs.livingExpense - monthlyMortgagePmt;
 
-        if (netIncome >= requiredToClear) {
-          const surplus = netIncome - requiredToClear;
-          currentCreditLoan = 0;
-          currentCash += surplus;
-          creditLoanClearedMonth = month;
+        if (currentCreditLoan > 0) {
+          // 신용대출 금리 반영 로직
+          const monthlyCreditInterest =
+            currentCreditLoan * (inputs.creditLoanRate / 100 / 12);
+          const requiredToClear = currentCreditLoan + monthlyCreditInterest;
+
+          if (netIncome >= requiredToClear) {
+            const surplus = netIncome - requiredToClear;
+            currentCreditLoan = 0;
+            currentCash += surplus;
+            creditLoanClearedMonth = month;
+          } else {
+            currentCreditLoan =
+              currentCreditLoan + monthlyCreditInterest - netIncome;
+          }
         } else {
-          currentCreditLoan =
-            currentCreditLoan + monthlyCreditInterest - netIncome;
+          currentCash += netIncome; // 신용대출 완납 후엔 순소득 모두 현금 적립
         }
-      } else {
-        currentCash += netIncome; // 신용대출 완납 후엔 순소득 모두 현금 적립
+
+        if (currentMortgage > 0) {
+          const monthlyMortgageRate = inputs.mortgageRate / 100 / 12;
+          const interestPayment = currentMortgage * monthlyMortgageRate;
+          const principalPayment = monthlyMortgagePmt - interestPayment;
+          currentMortgage = Math.max(0, currentMortgage - principalPayment);
+        }
       }
 
-      const monthlyMortgageRate = inputs.mortgageRate / 100 / 12;
-      const interestPayment = currentMortgage * monthlyMortgageRate;
-      const principalPayment = monthlyMortgagePmt - interestPayment;
-      currentMortgage = Math.max(0, currentMortgage - principalPayment);
-
-      if (creditLoanClearedMonth !== -1 && month >= creditLoanClearedMonth + 12)
+      // 종료 조건: 매수 이후이고 신용대출 상환 후 12개월이 지났거나, 총 360개월 초과 시
+      if (month > inputs.monthsUntilPurchase && creditLoanClearedMonth !== -1 && month >= creditLoanClearedMonth + 12)
         break;
       if (month > 360) break;
       month++;
     }
+
+    const accumulatedSavings = netIncomeBeforePurchase * inputs.monthsUntilPurchase;
+    const totalCashAtPurchase = inputs.currentCash + accumulatedSavings;
 
     return {
       data,
@@ -483,12 +505,27 @@ export default function RealEstateSimulator() {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <ReferenceLine
+                      x={`${inputs.monthsUntilPurchase}개월`}
+                      stroke="#f43f5e"
+                      strokeDasharray="5 5"
+                      label={{
+                        position: "top",
+                        value: "매수일",
+                        fill: "#f43f5e",
+                        fontSize: 12,
+                        fontWeight: "bold",
+                      }}
+                    />
                     <XAxis dataKey="name" fontSize={12} tickMargin={10} />
                     <YAxis
                       fontSize={12}
                       tickFormatter={(val) => `${val / 10000}억`}
                     />
-                    <Tooltip formatter={(value: any) => formatKRW(value)} />
+                    <Tooltip
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      formatter={(value: any) => formatKRW(Number(value))}
+                    />
                     {visibleKeys.cash && (
                       <Area
                         type="monotone"
@@ -523,9 +560,90 @@ export default function RealEstateSimulator() {
                 </ResponsiveContainer>
               </CardContent>
             </Card>
+
+            {/* Tracking Table Area */}
+            <Card className="bg-white border-none shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-lg">월별 상세 추이</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto h-[400px] overflow-y-auto relative rounded-md border">
+                  <table className="w-full text-sm text-left text-slate-600">
+                    <thead className="text-xs text-slate-700 uppercase bg-slate-50 sticky top-0 z-10 shadow-sm">
+                      <tr>
+                        <th className="px-4 py-3">월</th>
+                        <th className="px-4 py-3 text-right">현금</th>
+                        <th className="px-4 py-3 text-right">신용대출</th>
+                        <th className="px-4 py-3 text-right">주담대</th>
+                        <th className="px-4 py-3 text-center">이벤트</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.map(
+                        (
+                          row: {
+                            name: string;
+                            cash: number;
+                            creditLoan: number;
+                            mortgage: number;
+                            isPurchaseMonth: boolean;
+                          },
+                          i: number,
+                        ) => (
+                          <tr
+                            key={i}
+                            className={`border-b hover:bg-slate-50 ${row.isPurchaseMonth ? "bg-rose-50" : ""}`}
+                          >
+                          <td className="px-4 py-3 font-medium text-slate-900">
+                            {row.name} {i === 0 && "(현재)"}
+                          </td>
+                          <td className="px-4 py-3 text-right text-emerald-600 font-medium">
+                            {formatKRW(row.cash)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-orange-500 font-medium">
+                            {formatKRW(row.creditLoan)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-blue-600 font-medium">
+                            {formatKRW(row.mortgage)}
+                          </td>
+                          <td className="px-4 py-3 text-center text-xs">
+                            {row.isPurchaseMonth && (
+                              <span className="px-2 py-0.5 bg-rose-100 text-rose-700 rounded-full font-bold">
+                                매매/잔금
+                              </span>
+                            )}
+                            {i > 0 &&
+                              row.creditLoan === 0 &&
+                              data[i - 1].creditLoan > 0 && (
+                                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">
+                                  신용대출 완납
+                                </span>
+                              )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function RealEstateSimulator() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md bg-white border-none shadow-sm p-8 text-center">
+          <p className="text-slate-500 font-medium">데이터를 불러오는 중입니다...</p>
+        </Card>
+      </div>
+    }>
+      <SimulatorContent />
+    </Suspense>
   );
 }
